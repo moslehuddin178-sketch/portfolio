@@ -65,6 +65,11 @@ cd backend && gofmt -l . && go vet ./... && go test -race ./...
    ```
    It prints the GitHub secrets and variables and offers to set them with the GitHub CLI.
    Optional: `LOCATION=southeastasia SWA_LOCATION=eastasia` to deploy closer to you.
+   If it fails with `MaxNumberOfGlobalEnvironmentsInSubExceeded` (student and trial subscriptions allow one Container Apps environment), reuse the one you have:
+   ```bash
+   EXISTING_ENVIRONMENT_ID="$(az containerapp env show -n <env-name> -g <env-resource-group> --query id -o tsv)" \
+     GITHUB_REPO=<owner>/<repo-name> ./infra/provision.sh
+   ```
 3. **Run the pipeline:** push a commit, or *Actions → CI/CD → Run workflow*. The first run creates the container app.
 4. **If the API deploy can't pull the image**, open the `portfolio-api` package on GitHub (*Packages*), set its visibility to **Public**, and re-run the job. New GHCR packages start private.
 5. **Optional:** `./infra/set-github-token.sh` stores a GitHub token as a Container Apps secret (raises the API's GitHub rate limit).

@@ -86,14 +86,14 @@ const serviceRows: ReactNode[][] = [
   ],
   [
     'Container Apps environment',
-    'Shared boundary, networking and log routing for the container app.',
+    'Shared boundary, networking and log routing for the container app. Shared with another of my projects, because the subscription allows only one environment.',
     'Workload-profiles environment, Consumption profile only',
     <><span className="cost cost-free">No standing charge</span> while no Dedicated profiles are added.</>,
   ],
   [
     'Log Analytics workspace',
     'Stores the API’s console logs and Container Apps system logs.',
-    'Pay-as-you-go · 30-day retention · 0.1 GB/day cap',
+    'Pay-as-you-go · 30-day retention · daily cap',
     <><span className="cost cost-grant">Free allowance</span> first 5 GB ingested per billing account per month, 31 days retention included; billed per GB beyond that.</>,
   ],
   [
@@ -244,8 +244,8 @@ export default function InfrastructurePage() {
               caps the worst case.
             </li>
             <li>
-              <strong>Log Analytics</strong>, only beyond 5 GB/month. The workspace has a 0.1 GB daily cap (about 3
-              GB/month), health probes are not logged, and each request produces one short JSON line.
+              <strong>Log Analytics</strong>, only beyond 5 GB/month. The workspace has a daily cap, health probes are
+              not logged, and each request produces one short JSON line.
             </li>
             <li>
               <strong>GitHub Actions</strong> (not Azure): free on public repositories; private repositories use the
@@ -271,6 +271,7 @@ export default function InfrastructurePage() {
               Run <C>GITHUB_REPO=&lt;owner&gt;/&lt;repo&gt; ./infra/provision.sh</C> after <C>az login</C>. It creates
               the resource group, Log Analytics workspace, Container Apps environment and a Free Static Web App, plus an
               Entra ID app registration that trusts GitHub’s OIDC tokens for this repository’s <C>main</C> branch only.
+              With <C>EXISTING_ENVIRONMENT_ID</C> set, it reuses an existing environment (and its workspace) instead.
             </li>
             <li>
               Let the script set the GitHub secrets and variables it prints (it uses the GitHub CLI if you are signed
@@ -426,7 +427,7 @@ curl localhost:8080/api/v1/status`}</code>
               [<C>AZURE_SUBSCRIPTION_ID</C>, 'Secret', 'Target subscription'],
               [<C>AZURE_STATIC_WEB_APPS_API_TOKEN</C>, 'Secret', 'Static Web Apps deployment token'],
               [<C>AZURE_RESOURCE_GROUP</C>, 'Variable', <C>rg-portfolio</C>],
-              [<C>AZURE_CONTAINERAPPS_ENVIRONMENT</C>, 'Variable', <C>cae-portfolio</C>],
+              [<C>AZURE_CONTAINERAPPS_ENVIRONMENT</C>, 'Variable', <><C>cae-portfolio</C>, or a shared environment’s resource ID</>],
               [<C>AZURE_CONTAINER_APP_NAME</C>, 'Variable', <C>ca-portfolio-api</C>],
               [<C>API_BASE_URL</C>, 'Variable', <C>https://ca-portfolio-api.&lt;env-domain&gt;</C>],
               [<C>ALLOWED_ORIGINS</C>, 'Variable', 'Static Web App URL and any custom domains'],
@@ -544,6 +545,10 @@ az containerapp logs show -n ca-portfolio-api -g rg-portfolio --type system`}</c
               [
                 'The frontend needs the API URL at build time, before the API exists.',
                 'The URL is predictable (<app>.<environment default domain>), so the provisioning script computes it in advance; the first pipeline run creates the app.',
+              ],
+              [
+                'The subscription allows only one Container Apps environment, and another project already uses it.',
+                'The provisioning script can reuse an existing environment. The API keeps its own resource group, and on the shared environment the deploy identity has only the Container Apps Operator role: it can add apps but not change or delete the environment.',
               ],
               [
                 'New GitHub Container Registry packages are private, so Azure can’t pull them.',
