@@ -1,0 +1,247 @@
+# CI/CD for the portfolio.
+#
+#   changes ─────────────────────────────┐
+#   frontend (test + build) ──────────────┼─► deploy-frontend  (Azure Static Web Apps, every push to main)
+#   backend (vet + test + build) ─► image ┴─► deploy-backend   (Azure Container Apps, only when backend/ changed)
+#
+# Pull requests run every check but never deploy.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # manual run = full deploy, including the API
+
+# Least privilege by default; individual jobs opt in to more.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # A manual run or the very first push of the branch always counts as a backend change.
+      backend: ${{ github.event_name == 'workflow_dispatch' || github.event.before == '0000000000000000000000000000000000000000' || steps.filter.outputs.backend == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+
+  frontend:
+    name: Frontend · test & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Type-check and build
+        run: |
+          export VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          npm run build
+        env:
+          # Build-time values are compiled into public JavaScript: never put secrets here.
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  backend:
+    name: Backend · vet, test & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache: false # standard library only: nothing to cache
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "::error::Run gofmt -w on: $unformatted"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build -trimpath -o /dev/null ./cmd/api
+
+  image:
+    name: Docker · build & validate image
+    needs: [changes, backend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io (only used on main when backend/ changed)
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      pushed: ${{ steps.meta.outputs.push }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: meta
+        name: Compute image reference
+        run: |
+          # Immutable tag = commit SHA, so every revision maps to exactly one commit.
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/portfolio-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          push=false
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" && "$GITHUB_REF" == "refs/heads/main" && "${{ needs.changes.outputs.backend }}" == "true" ]]; then
+            push=true
+          fi
+          echo "push=$push" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          load: true
+          tags: ${{ steps.meta.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Validate image
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect --format '{{.Config.User}}' "$IMAGE")"
+          if [[ -z "$user" || "$user" == root* || "$user" == 0* ]]; then
+            echo "::error::Image must run as a non-root user (got '$user')"; exit 1
+          fi
+          size="$(docker image inspect --format '{{.Size}}' "$IMAGE")"
+          echo "Image size: $((size / 1024 / 1024)) MiB, user: $user"
+          if (( size > 50 * 1024 * 1024 )); then echo "::error::Image is larger than 50 MiB"; exit 1; fi
+
+          docker run -d --name api -p 8080:8080 -e ALLOWED_ORIGINS=https://ci.example.com "$IMAGE"
+          trap 'docker logs api; docker rm -f api >/dev/null' EXIT
+          for _ in $(seq 1 30); do curl -fsS http://localhost:8080/healthz && break; sleep 1; done
+          curl -fsS http://localhost:8080/api/v1/status | tee status.json; echo
+          jq -e --arg sha "$GITHUB_SHA" '.commit == $sha' status.json > /dev/null
+          acao="$(curl -fsS -D - -o /dev/null -H 'Origin: https://ci.example.com' http://localhost:8080/api/v1/status | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')"
+          [[ "$acao" == "https://ci.example.com" ]] || { echo "::error::CORS header missing"; exit 1; }
+      - name: Log in to GitHub Container Registry
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push image
+        if: steps.meta.outputs.push == 'true'
+        run: docker push "${{ steps.meta.outputs.image }}"
+
+  deploy-frontend:
+    name: Deploy frontend → Azure Static Web Apps
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [frontend, backend, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: dist
+      - id: deploy
+        name: Upload the tested build
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: dist # already built and tested above; SWA must not rebuild it
+          output_location: ''
+          skip_app_build: true
+          skip_api_build: true
+      - name: Verify the live site serves this commit
+        env:
+          SITE_URL: ${{ steps.deploy.outputs.static_web_app_url }}
+        run: |
+          for _ in $(seq 1 20); do
+            if curl -fsS "$SITE_URL" | grep -q "<meta name=\"build-sha\" content=\"${GITHUB_SHA}\""; then
+              echo "Live: $SITE_URL is serving ${GITHUB_SHA}"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$SITE_URL is not serving ${GITHUB_SHA}"; exit 1
+
+  deploy-backend:
+    name: Deploy backend → Azure Container Apps
+    if: needs.image.outputs.pushed == 'true'
+    needs: [frontend, backend, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC: GitHub proves its identity to Entra ID; no Azure password is stored
+    env:
+      IMAGE: ${{ needs.image.outputs.image }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINERAPPS_ENVIRONMENT: ${{ vars.AZURE_CONTAINERAPPS_ENVIRONMENT }}
+      APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+      ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+      PROFILE_GITHUB_USERNAME: ${{ vars.PROFILE_GITHUB_USERNAME || github.repository_owner }}
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Create or update the container app
+        run: |
+          set -euo pipefail
+          az config set extension.use_dynamic_install=yes_without_prompt --only-show-errors
+          # Non-secret settings come from GitHub variables and are re-applied on every deploy.
+          # Secrets (GITHUB_TOKEN) live only in Container Apps secrets: see infra/set-github-token.sh.
+          env_vars=(APP_ENV=production "ALLOWED_ORIGINS=${ALLOWED_ORIGINS}" "GITHUB_USERNAME=${PROFILE_GITHUB_USERNAME}")
+          if az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --only-show-errors > /dev/null 2>&1; then
+            az containerapp update -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+              --image "$IMAGE" --set-env-vars "${env_vars[@]}" --only-show-errors -o none
+          else
+            echo "First deployment: creating $APP_NAME (scale-to-zero, 0.25 vCPU / 0.5 GiB, max 1 replica)"
+            az containerapp create -n "$APP_NAME" -g "$RESOURCE_GROUP" \
+              --environment "$CONTAINERAPPS_ENVIRONMENT" --image "$IMAGE" \
+              --ingress external --target-port 8080 \
+              --cpu 0.25 --memory 0.5Gi --min-replicas 0 --max-replicas 1 \
+              --env-vars "${env_vars[@]}" --only-show-errors -o none
+          fi
+      - name: Verify the live API runs this commit
+        run: |
+          fqdn="$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
+          for _ in $(seq 1 30); do
+            commit="$(curl -fsS --max-time 30 "https://${fqdn}/api/v1/status" | jq -r .commit 2>/dev/null || true)"
+            if [[ "$commit" == "$GITHUB_SHA" ]]; then echo "Live: https://${fqdn} is running ${commit}"; exit 0; fi
+            echo "Waiting for the new revision (currently: ${commit:-unreachable})"; sleep 10
+          done
+          echo "::error::https://${fqdn} did not report commit ${GITHUB_SHA}"; exit 1

@@ -1,0 +1,8 @@
+# Keep the Docker build context small and free of local artefacts.
+bin/
+*.test
+*.out
+.env
+.env.*
+Dockerfile
+.dockerignore
