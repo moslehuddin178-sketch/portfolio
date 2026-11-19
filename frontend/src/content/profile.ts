@@ -56,7 +56,7 @@ export const profile: Profile = {
   email: '',
   links: [
     { label: 'GitHub', href: 'https://github.com/moslehuddin178-sketch' },
-    // TODO: { label: 'LinkedIn', href: 'https://www.linkedin.com/in/your-profile' },
+    { label: 'LinkedIn', href: 'https://www.linkedin.com/in/mosleh-rupok-1b72b63a2/' },
   ],
   // These are the technologies this repository actually uses. Add your others.
   skills: [
