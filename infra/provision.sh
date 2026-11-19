@@ -48,6 +48,16 @@ SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
 echo "Subscription: $(az account show --query name -o tsv) ($SUBSCRIPTION_ID)"
 
+# GitHub's OIDC token names the repository by login AND immutable ID
+# (repo:<owner>@<owner-id>/<repo>@<repo-id>:ref:...), so look both up now.
+# This also stops a deleted and re-created repository of the same name from
+# inheriting the Azure trust.
+GH_IDS="$(az rest --method get --skip-authorization-header --url "https://api.github.com/repos/${GITHUB_REPO}" \
+  --query "join('@', [owner.login, to_string(owner.id), name, to_string(id)])" -o tsv 2> /dev/null)" \
+  || { echo "GitHub repository ${GITHUB_REPO} not found: create it (public) first." >&2; exit 1; }
+IFS=@ read -r GH_OWNER GH_OWNER_ID GH_REPO GH_REPO_ID <<< "$GH_IDS"
+OIDC_SUBJECT="repo:${GH_OWNER}@${GH_OWNER_ID}/${GH_REPO}@${GH_REPO_ID}:ref:refs/heads/main"
+
 echo "==> Registering resource providers (no cost)"
 for ns in Microsoft.App Microsoft.OperationalInsights Microsoft.Web; do
   az provider register --namespace "$ns" --wait --only-show-errors
@@ -93,11 +103,11 @@ fi
 SP_OBJECT_ID="$(az ad sp show --id "$CLIENT_ID" --query id -o tsv 2> /dev/null || az ad sp create --id "$CLIENT_ID" --query id -o tsv)"
 
 # Only workflow runs on the main branch of this repository can request a token.
-if [ -z "$(az ad app federated-credential list --id "$CLIENT_ID" --query "[?name=='github-main'].name" -o tsv)" ]; then
+if [ -z "$(az ad app federated-credential list --id "$CLIENT_ID" --query "[?subject=='${OIDC_SUBJECT}'].name" -o tsv)" ]; then
   az ad app federated-credential create --id "$CLIENT_ID" --parameters "{
-    \"name\": \"github-main\",
+    \"name\": \"github-main-${GH_REPO_ID}\",
     \"issuer\": \"https://token.actions.githubusercontent.com\",
-    \"subject\": \"repo:${GITHUB_REPO}:ref:refs/heads/main\",
+    \"subject\": \"${OIDC_SUBJECT}\",
     \"audiences\": [\"api://AzureADTokenExchange\"]
   }" -o none
 fi

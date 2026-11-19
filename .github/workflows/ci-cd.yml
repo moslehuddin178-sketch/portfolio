@@ -184,7 +184,6 @@ jobs:
           app_location: dist # already built and tested above; SWA must not rebuild it
           output_location: ''
           skip_app_build: true
-          skip_api_build: true
       - name: Verify the live site serves this commit
         env:
           SITE_URL: ${{ steps.deploy.outputs.static_web_app_url }}

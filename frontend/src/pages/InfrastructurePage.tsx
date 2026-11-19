@@ -559,6 +559,10 @@ az containerapp logs show -n ca-portfolio-api -g rg-portfolio --type system`}</c
                 'OIDC federated credentials: GitHub exchanges a short-lived token; nothing to leak or rotate.',
               ],
               [
+                'The first Azure login failed: GitHub’s token subject includes the owner and repository IDs (repo:<owner>@<id>/<repo>@<id>:…), so a credential for repo:<owner>/<repo> never matched.',
+                'The provisioning script looks up both IDs from the GitHub API and trusts that exact subject. A deleted and re-created repository with the same name can’t reuse it.',
+              ],
+              [
                 'Unauthenticated GitHub API calls are limited to 60 per hour per IP, and outbound IPs are shared.',
                 'A 15-minute in-memory cache, stale-on-error fallback, and an optional token secret (5,000 per hour).',
               ],
