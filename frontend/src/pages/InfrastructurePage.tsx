@@ -102,6 +102,12 @@ const serviceRows: ReactNode[][] = [
     'n/a',
     <><span className="cost cost-free">Free</span></>,
   ],
+  [
+    'GitHub Pages (not Azure)',
+    'A second copy of the same frontend at <owner>.github.io/<repo>/, calling the same API.',
+    'Public repository',
+    <><span className="cost cost-free">Free</span> for public repositories.</>,
+  ],
 ]
 
 const notUsedRows: ReactNode[][] = [
@@ -148,6 +154,12 @@ const pipelineJobs = [
     title: 'Deploy frontend',
     when: 'Push to main',
     steps: ['Upload the already-tested dist/ to Static Web Apps', 'Poll the live site until its build-sha meta tag equals this commit'],
+  },
+  {
+    job: 'deploy-pages',
+    title: 'Deploy GitHub Pages copy',
+    when: 'Push to main',
+    steps: ['Publish the /<repo>/ build with the CSP <meta> tag and 404.html fallback', 'Poll the live copy until its build-sha meta tag equals this commit'],
   },
   {
     job: 'deploy-backend',
@@ -292,6 +304,10 @@ export default function InfrastructurePage() {
             <li>The Docker image is built and started in the runner to check that it is healthy.</li>
             <li>The tested <C>dist/</C> folder is uploaded to Static Web Apps with the deployment token.</li>
             <li>
+              A second build for the <C>/&lt;repo&gt;/</C> path is published to GitHub Pages, so the site is also at{' '}
+              <C>&lt;owner&gt;.github.io/&lt;repo&gt;/</C>.
+            </li>
+            <li>
               If <C>backend/</C> changed, the image is pushed to <C>ghcr.io</C> tagged with the commit SHA, and the
               container app is updated to that tag, which creates a new revision. Single-revision mode moves all
               traffic to it once it is healthy.
@@ -430,7 +446,7 @@ curl localhost:8080/api/v1/status`}</code>
               [<C>AZURE_CONTAINERAPPS_ENVIRONMENT</C>, 'Variable', <><C>cae-portfolio</C>, or a shared environment’s resource ID</>],
               [<C>AZURE_CONTAINER_APP_NAME</C>, 'Variable', <C>ca-portfolio-api</C>],
               [<C>API_BASE_URL</C>, 'Variable', <C>https://ca-portfolio-api.&lt;env-domain&gt;</C>],
-              [<C>ALLOWED_ORIGINS</C>, 'Variable', 'Static Web App URL and any custom domains'],
+              [<C>ALLOWED_ORIGINS</C>, 'Variable', 'Static Web App URL, the GitHub Pages origin and any custom domains'],
             ]}
           />
         </DocSection>
@@ -505,6 +521,11 @@ az containerapp logs show -n ca-portfolio-api -g rg-portfolio --type system`}</c
               X-Frame-Options, nosniff, Referrer-Policy and Permissions-Policy.
             </li>
             <li>
+              <strong>GitHub Pages copy:</strong> Pages can’t send custom headers, so that build carries the same CSP as
+              a <C>&lt;meta&gt;</C> tag, generated from <C>staticwebapp.config.json</C>. The other headers apply only on
+              Static Web Apps, which stays the primary host.
+            </li>
+            <li>
               <strong>HTTPS everywhere</strong> with platform-managed certificates on both services.
             </li>
             <li>
@@ -561,6 +582,10 @@ az containerapp logs show -n ca-portfolio-api -g rg-portfolio --type system`}</c
               [
                 'The first Azure login failed: GitHub’s token subject includes the owner and repository IDs (repo:<owner>@<id>/<repo>@<id>:…), so a credential for repo:<owner>/<repo> never matched.',
                 'The provisioning script looks up both IDs from the GitHub API and trusts that exact subject. A deleted and re-created repository with the same name can’t reuse it.',
+              ],
+              [
+                'GitHub Pages serves the site under /<repo>/, has no rewrite rules and can’t send headers.',
+                'A second vite build with --base /<repo>/ (the router uses the same base), 404.html as the deep-link fallback, and the CSP as a <meta> tag generated from staticwebapp.config.json.',
               ],
               [
                 'Unauthenticated GitHub API calls are limited to 60 per hour per IP, and outbound IPs are shared.',

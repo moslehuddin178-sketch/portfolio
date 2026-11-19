@@ -76,4 +76,17 @@ describe('App', () => {
     renderAt('/does-not-exist')
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument()
   })
+
+  it('routes and links under the GitHub Pages base path', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    render(
+      <MemoryRouter basename="/portfolio/" initialEntries={['/portfolio/infrastructure']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('heading', { level: 1, name: /built and deployed on azure/i })).toBeInTheDocument()
+    const nav = screen.getByRole('navigation', { name: 'Primary' })
+    expect(within(nav).getByRole('link', { name: 'Infrastructure' })).toHaveAttribute('href', '/portfolio/infrastructure')
+    expect(within(nav).getByRole('link', { name: 'About' })).toHaveAttribute('href', '/portfolio/#about')
+  })
 })

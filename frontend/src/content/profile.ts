@@ -70,7 +70,7 @@ export const profile: Profile = {
       summary:
         'This site: a React + TypeScript frontend and an optional Go REST API, containerised with Docker and deployed to Azure by a GitHub Actions pipeline.',
       highlights: [
-        'Frontend served by Azure Static Web Apps (Free plan) with managed HTTPS.',
+        'Frontend served by Azure Static Web Apps (Free plan) with managed HTTPS, and published to GitHub Pages by the same pipeline.',
         'Go API in a ~4 MB distroless container on Azure Container Apps that scales to zero when idle.',
         'GitHub Actions runs the tests, builds and validates the Docker image, then deploys with OIDC: no Azure passwords stored in GitHub.',
         'Each deploy is verified: the pipeline waits until the live site and API report the new commit SHA.',

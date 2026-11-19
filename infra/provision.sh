@@ -94,6 +94,9 @@ if ! az staticwebapp show -n "$SWA" -g "$RG" --only-show-errors > /dev/null 2>&1
 fi
 SITE_URL="https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
 SWA_TOKEN="$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)"
+# The pipeline also publishes a copy to GitHub Pages; CORS needs only the origin, not the /<repo>/ path.
+PAGES_URL="https://$(printf '%s' "$GH_OWNER" | tr '[:upper:]' '[:lower:]').github.io"
+ALLOWED_ORIGINS="${SITE_URL},${PAGES_URL}"
 
 echo "==> Entra ID app registration $ENTRA_APP with GitHub OIDC federation"
 CLIENT_ID="$(az ad app list --display-name "$ENTRA_APP" --query '[0].appId' -o tsv)"
@@ -136,6 +139,7 @@ cat << EOF
 Azure resources are ready.
 
   Static Web App URL : ${SITE_URL}
+  GitHub Pages URL   : ${PAGES_URL}/${GH_REPO}/ (enable Pages: Settings → Pages → Source: GitHub Actions)
   API URL (after the first deploy) : ${API_URL}
 
 Configure the GitHub repository ${GITHUB_REPO}:
@@ -151,7 +155,7 @@ Configure the GitHub repository ${GITHUB_REPO}:
     AZURE_CONTAINERAPPS_ENVIRONMENT   ${CAE}
     AZURE_CONTAINER_APP_NAME          ${APP}
     API_BASE_URL                      ${API_URL}
-    ALLOWED_ORIGINS                   ${SITE_URL}
+    ALLOWED_ORIGINS                   ${ALLOWED_ORIGINS}
 ==============================================================================
 EOF
 
@@ -166,7 +170,7 @@ if command -v gh > /dev/null && gh auth status > /dev/null 2>&1; then
     gh variable set AZURE_CONTAINERAPPS_ENVIRONMENT --repo "$GITHUB_REPO" --body "$CAE"
     gh variable set AZURE_CONTAINER_APP_NAME --repo "$GITHUB_REPO" --body "$APP"
     gh variable set API_BASE_URL --repo "$GITHUB_REPO" --body "$API_URL"
-    gh variable set ALLOWED_ORIGINS --repo "$GITHUB_REPO" --body "$SITE_URL"
+    gh variable set ALLOWED_ORIGINS --repo "$GITHUB_REPO" --body "$ALLOWED_ORIGINS"
     echo "Done. Push to main (or run the workflow manually) to deploy."
   fi
 else

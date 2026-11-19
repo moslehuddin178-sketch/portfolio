@@ -2,7 +2,7 @@
 
 A personal portfolio website with:
 
-- **Frontend:** React + TypeScript (Vite) on **Azure Static Web Apps** (Free plan)
+- **Frontend:** React + TypeScript (Vite) on **Azure Static Web Apps** (Free plan), with a copy on **GitHub Pages**
 - **Backend (optional):** Go REST API in a Docker container on **Azure Container Apps** (Consumption, scales to zero)
 - **CI/CD:** one GitHub Actions workflow that tests, builds, validates the Docker image and deploys both parts
 - **Docs:** an `/infrastructure` page with the architecture diagram, services and cost, pipeline, configuration, monitoring, security, and challenges. It embeds the real `Dockerfile` and workflow, and shows live status read from the running deployment.
@@ -70,14 +70,14 @@ cd backend && gofmt -l . && go vet ./... && go test -race ./...
    EXISTING_ENVIRONMENT_ID="$(az containerapp env show -n <env-name> -g <env-resource-group> --query id -o tsv)" \
      GITHUB_REPO=<owner>/<repo-name> ./infra/provision.sh
    ```
-3. **Run the pipeline:** push a commit, or *Actions → CI/CD → Run workflow*. The first run creates the container app.
+3. **Run the pipeline:** first enable GitHub Pages (*Settings → Pages → Source: GitHub Actions*, or `gh api -X POST repos/<owner>/<repo-name>/pages -f build_type=workflow`), then push a commit, or *Actions → CI/CD → Run workflow*. The first run creates the container app.
 4. **If the API deploy can't pull the image**, open the `portfolio-api` package on GitHub (*Packages*), set its visibility to **Public**, and re-run the job. New GHCR packages start private.
 5. **Optional:** `./infra/set-github-token.sh` stores a GitHub token as a Container Apps secret (raises the API's GitHub rate limit).
 6. **Custom domain:** add a `CNAME` for `www` → your `*.azurestaticapps.net` hostname, then
    `az staticwebapp hostname set -n swa-portfolio -g rg-portfolio --hostname www.example.com`
    (free managed certificate). Add the new origin to the `ALLOWED_ORIGINS` GitHub variable and re-run the workflow.
 
-After that, every push to `main` deploys the frontend. The API is redeployed only when `backend/` changes. Both deploy jobs wait until the live URL reports the new commit.
+After that, every push to `main` deploys the frontend to Static Web Apps and to GitHub Pages (`https://<owner>.github.io/<repo-name>/`). The API is redeployed only when `backend/` changes. Every deploy job waits until the live URL reports the new commit.
 
 ## What costs money
 
@@ -88,7 +88,7 @@ After that, every push to `main` deploys the frontend. The API is redeployed onl
 | Container Apps environment | Consumption profile only | No standing charge |
 | Log Analytics | Pay-as-you-go, 30-day retention, 0.1 GB/day cap | First 5 GB/month per billing account free, then per GB |
 | Entra ID app registration (OIDC) | n/a | Free |
-| GitHub Container Registry, GitHub Actions | n/a | Free for public repos and images |
+| GitHub Pages, GitHub Container Registry, GitHub Actions | n/a | Free for public repos and images |
 
 **Not created, to avoid cost:** Azure Container Registry (no free tier), Key Vault, Application Insights, any database, Front Door, Static Web Apps Standard, and always-on replicas.
 
@@ -102,6 +102,8 @@ az ad app delete --id "$(az ad app list --display-name gh-portfolio-deploy --que
 ```
 
 ## Notes
+
+- GitHub Pages can't send response headers. The Pages copy gets the same CSP as a `<meta>` tag (generated from `staticwebapp.config.json` by `vite.config.ts`), but not HSTS, `X-Frame-Options` or the other headers, so Static Web Apps remains the hardened primary host.
 
 - The CSP in `staticwebapp.config.json` allows API calls to `https://*.azurecontainerapps.io`. If you put the API on a custom domain, add it to `connect-src`.
 - `VITE_*` variables are compiled into public JavaScript. Never put secrets in them.
